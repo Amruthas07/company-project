@@ -1,0 +1,9 @@
+{
+  "name": "SentinelAI - User Behavior & Threat Detection System",
+  "description": "Enterprise software-only insider threat detection platform featuring ML behavioral baselines, Isolation Forest anomaly detection, XGBoost risk scoring, SHAP explainability, and risk-adaptive face verification.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
