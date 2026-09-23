@@ -147,14 +147,23 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </div>
 
-          {/* Quick Register / Login buttons */}
+          {/* Quick Sign In and Register buttons */}
+          <button
+            onClick={() => openAuth('login')}
+            title="Sign In to Enterprise Console"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-slate-300 hover:text-white bg-slate-900 hover:bg-slate-800 border border-slate-750 hover:border-slate-700 rounded-lg transition-colors cursor-pointer"
+          >
+            <LogIn className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">Sign In</span>
+          </button>
+
           <button
             onClick={() => openAuth('register')}
-            title="Register new Indian employee"
-            className="hidden lg:flex items-center gap-1 px-2.5 py-1.5 text-xs text-cyan-400 hover:text-cyan-300 bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-800/80 rounded-lg transition-colors"
+            title="Register new employee identity"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-cyan-400 hover:text-cyan-300 bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-800/80 rounded-lg transition-colors cursor-pointer"
           >
             <UserPlus className="w-3.5 h-3.5" />
-            <span>Register</span>
+            <span className="hidden sm:inline">Register</span>
           </button>
 
           <button

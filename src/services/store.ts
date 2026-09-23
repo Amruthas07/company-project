@@ -380,7 +380,12 @@ class ThreatStore {
     this.notify();
   }
 
-  public enrollFace(userId: string, embedding: number[], photoDataUrl?: string) {
+  public enrollFace(
+    userId: string,
+    embedding: number[],
+    photoDataUrl?: string,
+    imageFile?: Blob | File
+  ) {
     const user = this.users.find((u) => u.id === userId);
     if (!user) return;
     user.enrolledFaceEmbedding = embedding;
@@ -390,7 +395,9 @@ class ThreatStore {
     this.notify();
 
     // Async sync with backend
-    faceApi.register(userId, embedding).catch((err) => console.warn('[Face API] register error:', err));
+    faceApi
+      .register(userId, embedding, imageFile)
+      .catch((err) => console.warn('[Face API] register error:', err));
   }
 
   public logEvent(
@@ -471,7 +478,8 @@ class ThreatStore {
   public verifyBiometricFace(
     incidentId: string,
     probeEmbedding: number[] | null,
-    isTestScenarioMatch: boolean | null = null
+    isTestScenarioMatch: boolean | null = null,
+    imageFile?: Blob | File
   ) {
     const incident = this.incidents.find((i) => i.id === incidentId);
     if (!incident) return { success: false, reason: 'Incident not found' };
@@ -555,6 +563,7 @@ class ThreatStore {
         incidentId,
         probeEmbedding: probeEmbedding || undefined,
         isTestMatch: isTestScenarioMatch !== null ? isTestScenarioMatch : undefined,
+        imageFile,
       })
       .catch((err) => console.warn('[Face API] verify error:', err));
 
@@ -565,7 +574,8 @@ class ThreatStore {
     userId: string,
     probeEmbedding: number[] | null,
     incidentId?: string,
-    isTestMatch: boolean | null = null
+    isTestMatch: boolean | null = null,
+    imageFile?: Blob | File
   ) {
     const incId =
       incidentId ||
@@ -573,7 +583,7 @@ class ThreatStore {
     if (!incId) {
       return { passed: false, similarityPercentage: 0, details: 'No active verification pending' };
     }
-    const result = this.verifyBiometricFace(incId, probeEmbedding, isTestMatch);
+    const result = this.verifyBiometricFace(incId, probeEmbedding, isTestMatch, imageFile);
     if (!result.success || !result.verificationResult) {
       return { passed: false, similarityPercentage: 0, details: result.reason || 'Verification failed' };
     }

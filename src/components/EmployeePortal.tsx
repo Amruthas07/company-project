@@ -17,6 +17,7 @@ import {
 import { ActivityEvent, CorporateFile, SecurityIncident, User } from '../types/threat';
 import { store } from '../services/store';
 import { SecurityGateModal } from './SecurityGateModal';
+import { FaceEnrollmentModal } from './FaceEnrollmentModal';
 
 interface EmployeePortalProps {
   currentUser: User;
@@ -32,6 +33,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
   incidents,
 }) => {
   const [activeTab, setActiveTab] = useState<'files' | 'vault' | 'devices' | 'history'>('files');
+  const [isEnrollingFace, setIsEnrollingFace] = useState(false);
   const [actionNotice, setActionNotice] = useState<{
     type: 'info' | 'warn' | 'error';
     msg: string;
@@ -236,15 +238,23 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
 
           <div>
             <div className="text-[11px] text-slate-400">Biometric Profile</div>
-            <div className="text-xs font-semibold text-slate-200 flex items-center gap-1">
-              {currentUser.enrolledFaceEmbedding ? (
-                <>
-                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  <span className="text-emerald-400">Enrolled (LBP 531d)</span>
-                </>
-              ) : (
-                <span className="text-amber-400">Not Enrolled</span>
-              )}
+            <div className="flex items-center gap-2 mt-0.5">
+              <div className="text-xs font-semibold text-slate-200 flex items-center gap-1">
+                {currentUser.enrolledFaceEmbedding ? (
+                  <>
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    <span className="text-emerald-400">Enrolled (LBP 3x3)</span>
+                  </>
+                ) : (
+                  <span className="text-amber-400">Not Enrolled</span>
+                )}
+              </div>
+              <button
+                onClick={() => setIsEnrollingFace(true)}
+                className="text-[10px] text-cyan-400 hover:text-cyan-300 bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-800/80 px-2 py-0.5 rounded cursor-pointer transition-colors"
+              >
+                {currentUser.enrolledFaceEmbedding ? 'Update' : 'Enroll Face'}
+              </button>
             </div>
           </div>
         </div>
@@ -587,6 +597,14 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
             // Re-check state
             store.setCurrentUser(currentUser.id);
           }}
+        />
+      )}
+
+      {/* Biometric Face Enrollment Modal */}
+      {isEnrollingFace && (
+        <FaceEnrollmentModal
+          user={currentUser}
+          onClose={() => setIsEnrollingFace(false)}
         />
       )}
     </div>

@@ -13,6 +13,158 @@ export interface FaceVerificationResult {
   featureVectorLength: number;
 }
 
+export interface FaceDetectionCheckResult {
+  detected: boolean;
+  status: 'SUCCESS' | 'NO_FACE' | 'MULTIPLE_FACES' | 'INSUFFICIENT_QUALITY';
+  message: string;
+}
+
+/**
+ * Validates face presence, lighting quality, and single-face criteria
+ * on an HTML5 canvas element prior to enrollment/verification.
+ */
+export async function detectFaceInCanvas(
+  canvas: HTMLCanvasElement
+): Promise<FaceDetectionCheckResult> {
+  const ctx = canvas.getContext('2d');
+  if (!ctx || canvas.width === 0 || canvas.height === 0) {
+    return {
+      detected: false,
+      status: 'NO_FACE',
+      message: 'No face detected. Please position your face inside the frame.',
+    };
+  }
+
+  // 1. Check lighting / image quality
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imgData.data;
+  let totalLum = 0;
+  const sampleStep = Math.max(1, Math.floor(data.length / (4 * 2000)));
+  const lumSamples: number[] = [];
+
+  for (let i = 0; i < data.length; i += sampleStep * 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    totalLum += lum;
+    lumSamples.push(lum);
+  }
+
+  const avgLum = totalLum / Math.max(1, lumSamples.length);
+  let variance = 0;
+  for (const l of lumSamples) {
+    variance += (l - avgLum) ** 2;
+  }
+  const stdDev = Math.sqrt(variance / Math.max(1, lumSamples.length));
+
+  // Extreme underexposure (< 26) or overexposure (> 242) or flat/blank screen (stdDev < 10)
+  if (avgLum < 26 || avgLum > 242 || stdDev < 10) {
+    return {
+      detected: false,
+      status: 'INSUFFICIENT_QUALITY',
+      message: 'Image quality is insufficient. Please improve lighting and try again.',
+    };
+  }
+
+  // 2. Native FaceDetector API (when supported by browser, e.g. Chrome/Chromium)
+  if (typeof (window as any).FaceDetector !== 'undefined') {
+    try {
+      const faceDetector = new (window as any).FaceDetector({
+        fastMode: true,
+        maxDetectedFaces: 5,
+      });
+      const detectedFaces = await faceDetector.detect(canvas);
+      if (detectedFaces.length === 0) {
+        return {
+          detected: false,
+          status: 'NO_FACE',
+          message: 'No face detected. Please position your face inside the frame.',
+        };
+      }
+      if (detectedFaces.length > 1) {
+        return {
+          detected: false,
+          status: 'MULTIPLE_FACES',
+          message: 'Multiple faces detected. Please ensure only one person is visible.',
+        };
+      }
+      return {
+        detected: true,
+        status: 'SUCCESS',
+        message: 'Face detected.',
+      };
+    } catch {
+      // Fall through to algorithmic skin-tone & spatial analysis
+    }
+  }
+
+  // 3. Robust skin-tone & spatial cluster analysis (cross-browser fallback)
+  const w = canvas.width;
+  const h = canvas.height;
+  let centerSkinCount = 0;
+  let leftSkinCount = 0;
+  let rightSkinCount = 0;
+  let totalChecked = 0;
+
+  for (let y = Math.floor(h * 0.15); y < Math.floor(h * 0.85); y += 4) {
+    for (let x = Math.floor(w * 0.1); x < Math.floor(w * 0.9); x += 4) {
+      totalChecked++;
+      const idx = (y * w + x) * 4;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+
+      const isSkin =
+        r > 50 &&
+        g > 30 &&
+        b > 20 &&
+        r > g &&
+        r > b &&
+        Math.abs(r - g) > 10 &&
+        Math.max(r, g, b) - Math.min(r, g, b) > 12;
+
+      if (isSkin) {
+        if (x < w * 0.35) {
+          leftSkinCount++;
+        } else if (x > w * 0.65) {
+          rightSkinCount++;
+        } else {
+          centerSkinCount++;
+        }
+      }
+    }
+  }
+
+  const centerSkinRatio = centerSkinCount / Math.max(1, totalChecked * 0.4);
+  const leftSkinRatio = leftSkinCount / Math.max(1, totalChecked * 0.3);
+  const rightSkinRatio = rightSkinCount / Math.max(1, totalChecked * 0.3);
+  const totalSkinCount = centerSkinCount + leftSkinCount + rightSkinCount;
+  const totalSkinRatio = totalSkinCount / Math.max(1, totalChecked);
+
+  if (leftSkinRatio > 0.28 && rightSkinRatio > 0.28 && centerSkinRatio < 0.15) {
+    return {
+      detected: false,
+      status: 'MULTIPLE_FACES',
+      message: 'Multiple faces detected. Please ensure only one person is visible.',
+    };
+  }
+
+  if (centerSkinRatio < 0.03 && totalSkinRatio < 0.03) {
+    return {
+      detected: false,
+      status: 'NO_FACE',
+      message: 'No face detected. Please position your face inside the frame.',
+    };
+  }
+
+  return {
+    detected: true,
+    status: 'SUCCESS',
+    message: 'Face detected.',
+  };
+}
+
 /**
  * Extracts a normalized LBP (Local Binary Patterns) spatial histogram embedding
  * from an image canvas or element.

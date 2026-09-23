@@ -23,6 +23,10 @@ apiClient.interceptors.request.use(
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    // If sending FormData, delete explicit Content-Type so browser sets correct multipart boundary
+    if (config.data instanceof FormData && config.headers) {
+      delete config.headers['Content-Type'];
+    }
     return config;
   },
   (error) => Promise.reject(error)
@@ -134,11 +138,63 @@ export const riskApi = {
 
 // Face Biometric Endpoints
 export const faceApi = {
-  register: async (userId?: string, faceEmbedding?: number[]) => {
-    const res = await apiClient.post('/face/register', { userId, faceEmbedding });
+  register: async (
+    userId?: string,
+    faceEmbedding?: number[],
+    imageFile?: Blob | File
+  ) => {
+    if (imageFile) {
+      const formData = new FormData();
+      if (userId) formData.append('userId', userId);
+      formData.append('file', imageFile, 'enrolled_webcam_face.jpg');
+      if (faceEmbedding && faceEmbedding.length > 0) {
+        formData.append('faceEmbedding', JSON.stringify(faceEmbedding));
+      }
+      const res = await apiClient.post<{
+        success: boolean;
+        message: string;
+        userId: string;
+        templateDimensions: number;
+      }>('/face/register', formData);
+      return res.data;
+    }
+    const res = await apiClient.post<{
+      success: boolean;
+      message: string;
+      userId: string;
+      templateDimensions: number;
+    }>('/face/register', { userId, faceEmbedding });
     return res.data;
   },
-  verify: async (payload: { incidentId: string; probeEmbedding?: number[]; isTestMatch?: boolean }) => {
+  verify: async (payload: {
+    incidentId: string;
+    probeEmbedding?: number[];
+    isTestMatch?: boolean;
+    imageFile?: Blob | File;
+  }) => {
+    if (payload.imageFile) {
+      const formData = new FormData();
+      formData.append('incidentId', payload.incidentId);
+      formData.append('file', payload.imageFile, 'probe_webcam_face.jpg');
+      if (payload.probeEmbedding && payload.probeEmbedding.length > 0) {
+        formData.append('probeEmbedding', JSON.stringify(payload.probeEmbedding));
+      }
+      if (payload.isTestMatch !== undefined && payload.isTestMatch !== null) {
+        formData.append('isTestMatch', String(payload.isTestMatch));
+      }
+      const res = await apiClient.post<{
+        passed: boolean;
+        similarityPercentage: number;
+        status: string;
+        incident: SecurityIncident;
+        userState: {
+          isRestricted: boolean;
+          currentRiskScore: number;
+          currentRiskBand: string;
+        };
+      }>('/face/verify', formData);
+      return res.data;
+    }
     const res = await apiClient.post<{
       passed: boolean;
       similarityPercentage: number;
