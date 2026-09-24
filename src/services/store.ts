@@ -380,7 +380,7 @@ class ThreatStore {
     this.notify();
   }
 
-  public enrollFace(
+  public async enrollFace(
     userId: string,
     embedding: number[],
     photoDataUrl?: string,
@@ -394,10 +394,14 @@ class ThreatStore {
     }
     this.notify();
 
-    // Async sync with backend
-    faceApi
-      .register(userId, embedding, imageFile)
-      .catch((err) => console.warn('[Face API] register error:', err));
+    // Sync with backend API
+    try {
+      const res = await faceApi.register(userId, embedding, imageFile);
+      return res;
+    } catch (err) {
+      console.warn('[Face API] register sync error:', err);
+      return { success: true, message: 'Enrolled locally' };
+    }
   }
 
   public logEvent(

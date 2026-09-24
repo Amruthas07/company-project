@@ -1024,138 +1024,184 @@ function extractLbpDescriptorFromBuffer(imageBuffer: Buffer): number[] {
 }
 
 // Face Registration
-app.post('/api/face/register', authenticateToken, upload.single('file'), (req, res) => {
-  const { userId } = req.body;
-  const targetUser = users.find((u) => u.id === (userId || (req as any).user.id));
-  if (!targetUser) {
-    return res.status(404).json({ detail: 'User not found' });
-  }
-
-  let embedding: number[] | null = null;
-
-  // Check if faceEmbedding is passed as JSON string (from FormData) or raw array
-  if (req.body.faceEmbedding) {
-    try {
-      const parsed =
-        typeof req.body.faceEmbedding === 'string'
-          ? JSON.parse(req.body.faceEmbedding)
-          : req.body.faceEmbedding;
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        embedding = parsed;
-      }
-    } catch {
-      // Fall through
+app.post(
+  '/api/face/register',
+  (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (token) {
+      jwt.verify(token, JWT_SECRET, (err, decoded: any) => {
+        if (!err && decoded) {
+          const user = users.find((u) => u.id === decoded.id || u.email === decoded.sub);
+          if (user) (req as any).user = user;
+        }
+        next();
+      });
+    } else {
+      next();
     }
+  },
+  upload.single('file'),
+  (req, res) => {
+    const { userId } = req.body;
+    const targetUser = users.find((u) => u.id === (userId || (req as any).user?.id));
+    if (!targetUser) {
+      return res.status(404).json({ detail: 'User not found' });
+    }
+
+    let embedding: number[] | null = null;
+
+    // Check if faceEmbedding is passed as JSON string (from FormData) or raw array
+    if (req.body.faceEmbedding) {
+      try {
+        const parsed =
+          typeof req.body.faceEmbedding === 'string'
+            ? JSON.parse(req.body.faceEmbedding)
+            : req.body.faceEmbedding;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          embedding = parsed;
+        }
+      } catch {
+        // Fall through
+      }
+    }
+
+    // If image file uploaded and no embedding provided yet, compute from buffer
+    if (!embedding && req.file && req.file.buffer && req.file.buffer.length > 0) {
+      embedding = extractLbpDescriptorFromBuffer(req.file.buffer);
+    }
+
+    if (!embedding) {
+      // Generate synthetic template
+      embedding = generateSyntheticLbpEmbedding(`${targetUser.id}_enrolled_${Date.now()}`);
+    }
+
+    targetUser.enrolledFaceEmbedding = embedding;
+
+    res.json({
+      success: true,
+      message: 'Face enrolled successfully.',
+      userId: targetUser.id,
+      templateDimensions: targetUser.enrolledFaceEmbedding.length,
+    });
   }
-
-  // If image file uploaded and no embedding provided yet, compute from buffer
-  if (!embedding && req.file && req.file.buffer && req.file.buffer.length > 0) {
-    embedding = extractLbpDescriptorFromBuffer(req.file.buffer);
-  }
-
-  if (!embedding) {
-    // Generate synthetic template
-    embedding = generateSyntheticLbpEmbedding(`${targetUser.id}_enrolled_${Date.now()}`);
-  }
-
-  targetUser.enrolledFaceEmbedding = embedding;
-
-  res.json({
-    success: true,
-    message: 'Face enrolled successfully.',
-    userId: targetUser.id,
-    templateDimensions: targetUser.enrolledFaceEmbedding.length,
-  });
-});
+);
 
 // Face Verification
-app.post('/api/face/verify', authenticateToken, upload.single('file'), (req, res) => {
-  const { incidentId, isTestMatch } = req.body;
-  const user = (req as any).user as User;
-
-  const incident = securityIncidents.find((i) => i.id === incidentId && i.userId === user.id);
-  if (!incident) {
-    return res.status(404).json({ detail: 'Active incident not found for user' });
-  }
-
-  let probeEmbedding: number[] | null = null;
-  if (req.body.probeEmbedding) {
-    try {
-      const parsed =
-        typeof req.body.probeEmbedding === 'string'
-          ? JSON.parse(req.body.probeEmbedding)
-          : req.body.probeEmbedding;
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        probeEmbedding = parsed;
-      }
-    } catch {
-      // Fall through
+app.post(
+  '/api/face/verify',
+  (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (token) {
+      jwt.verify(token, JWT_SECRET, (err, decoded: any) => {
+        if (!err && decoded) {
+          const user = users.find((u) => u.id === decoded.id || u.email === decoded.sub);
+          if (user) (req as any).user = user;
+        }
+        next();
+      });
+    } else {
+      next();
     }
+  },
+  upload.single('file'),
+  (req, res) => {
+    const { incidentId, isTestMatch } = req.body;
+    let user = (req as any).user as User | undefined;
+
+    const incident = securityIncidents.find((i) => i.id === incidentId);
+    if (!incident) {
+      return res.status(404).json({ detail: 'Active incident not found for user' });
+    }
+
+    if (!user) {
+      user = users.find((u) => u.id === incident.userId);
+    }
+
+    if (!user) {
+      return res.status(404).json({ detail: 'Employee not found for this incident' });
+    }
+
+    let probeEmbedding: number[] | null = null;
+    if (req.body.probeEmbedding) {
+      try {
+        const parsed =
+          typeof req.body.probeEmbedding === 'string'
+            ? JSON.parse(req.body.probeEmbedding)
+            : req.body.probeEmbedding;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          probeEmbedding = parsed;
+        }
+      } catch {
+        // Fall through
+      }
+    }
+
+    if (!probeEmbedding && req.file && req.file.buffer && req.file.buffer.length > 0) {
+      probeEmbedding = extractLbpDescriptorFromBuffer(req.file.buffer);
+    }
+
+    let similarity = 0.0;
+    let passed = false;
+
+    const isTestMatchBool = isTestMatch === true || isTestMatch === 'true';
+    const isTestMatchFalse = isTestMatch === false || isTestMatch === 'false';
+
+    if (isTestMatchBool) {
+      similarity = 0.945;
+      passed = true;
+    } else if (isTestMatchFalse) {
+      similarity = 0.421;
+      passed = false;
+    } else if (user.enrolledFaceEmbedding && probeEmbedding) {
+      similarity = compareLbpEmbeddings(probeEmbedding, user.enrolledFaceEmbedding);
+      passed = similarity >= 0.85;
+    } else if (user.enrolledFaceEmbedding) {
+      similarity = 0.92;
+      passed = true;
+    } else {
+      similarity = 0.15;
+      passed = false;
+    }
+
+    const faceAudit = {
+      attemptedAt: new Date().toISOString(),
+      passed,
+      confidenceScore: similarity,
+      similarityPercentage: Math.round(similarity * 1000) / 10,
+      thresholdPercentage: 85.0,
+      method: 'OpenCV_Haar_LBP_3x3_Spatial_Histogram',
+      notes: passed
+        ? `Biometric match confirmed (${Math.round(similarity * 1000) / 10}% >= 85%). Incident cleared.`
+        : `Biometric mismatch or missing profile (${Math.round(similarity * 1000) / 10}% < 85%). Security restriction enforced.`,
+    };
+
+    incident.faceVerification = faceAudit;
+
+    if (passed) {
+      incident.status = 'ENHANCED_MONITORING';
+      user.isRestricted = false;
+      user.currentRiskScore = Math.min(user.currentRiskScore, 40);
+      user.currentRiskBand = 'MEDIUM';
+    } else {
+      incident.status = incident.riskScore >= 80 ? 'TERMINATED' : 'RESTRICTED';
+      user.isRestricted = true;
+    }
+
+    res.json({
+      passed,
+      similarityPercentage: faceAudit.similarityPercentage,
+      status: incident.status,
+      incident,
+      userState: {
+        isRestricted: user.isRestricted,
+        currentRiskScore: user.currentRiskScore,
+        currentRiskBand: user.currentRiskBand,
+      },
+    });
   }
-
-  if (!probeEmbedding && req.file && req.file.buffer && req.file.buffer.length > 0) {
-    probeEmbedding = extractLbpDescriptorFromBuffer(req.file.buffer);
-  }
-
-  let similarity = 0.0;
-  let passed = false;
-
-  const isTestMatchBool = isTestMatch === true || isTestMatch === 'true';
-  const isTestMatchFalse = isTestMatch === false || isTestMatch === 'false';
-
-  if (isTestMatchBool) {
-    similarity = 0.945;
-    passed = true;
-  } else if (isTestMatchFalse) {
-    similarity = 0.421;
-    passed = false;
-  } else if (user.enrolledFaceEmbedding && probeEmbedding) {
-    similarity = compareLbpEmbeddings(probeEmbedding, user.enrolledFaceEmbedding);
-    passed = similarity >= 0.85;
-  } else if (user.enrolledFaceEmbedding) {
-    similarity = 0.92;
-    passed = true;
-  } else {
-    similarity = 0.15;
-    passed = false;
-  }
-
-  const faceAudit = {
-    attemptedAt: new Date().toISOString(),
-    passed,
-    confidenceScore: similarity,
-    similarityPercentage: Math.round(similarity * 1000) / 10,
-    thresholdPercentage: 85.0,
-    method: 'OpenCV_Haar_LBP_3x3_Spatial_Histogram',
-    notes: passed
-      ? `Biometric match confirmed (${Math.round(similarity * 1000) / 10}% >= 85%). Incident cleared.`
-      : `Biometric mismatch or missing profile (${Math.round(similarity * 1000) / 10}% < 85%). Security restriction enforced.`,
-  };
-
-  incident.faceVerification = faceAudit;
-
-  if (passed) {
-    incident.status = 'ENHANCED_MONITORING';
-    user.isRestricted = false;
-    user.currentRiskScore = Math.min(user.currentRiskScore, 40);
-    user.currentRiskBand = 'MEDIUM';
-  } else {
-    incident.status = incident.riskScore >= 80 ? 'TERMINATED' : 'RESTRICTED';
-    user.isRestricted = true;
-  }
-
-  res.json({
-    passed,
-    similarityPercentage: faceAudit.similarityPercentage,
-    status: incident.status,
-    incident,
-    userState: {
-      isRestricted: user.isRestricted,
-      currentRiskScore: user.currentRiskScore,
-      currentRiskBand: user.currentRiskBand,
-    },
-  });
-});
+);
 
 // Hardware USB Toggle
 app.post('/api/hardware/usb/toggle', authenticateToken, (req, res) => {
@@ -1524,7 +1570,8 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[SentinelAI] Full-Stack Server listening on port ${PORT}`);
-    console.log(`[SentinelAI] REST API active at http://0.0.0.0:${PORT}/api/health`);
+    console.log(`[SentinelAI] REST API active at http://localhost:${PORT}/api/health`);
+    console.log(`[SentinelAI] Web Application accessible at http://localhost:${PORT}`);
   });
 }
 

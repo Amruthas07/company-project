@@ -58,8 +58,8 @@ export async function detectFaceInCanvas(
   }
   const stdDev = Math.sqrt(variance / Math.max(1, lumSamples.length));
 
-  // Extreme underexposure (< 26) or overexposure (> 242) or flat/blank screen (stdDev < 10)
-  if (avgLum < 26 || avgLum > 242 || stdDev < 10) {
+  // Extreme underexposure (< 18) or extreme overexposure (> 248) or flat/blank screen (stdDev < 8)
+  if (avgLum < 18 || avgLum > 248 || stdDev < 8) {
     return {
       detected: false,
       status: 'INSUFFICIENT_QUALITY',
@@ -106,6 +106,7 @@ export async function detectFaceInCanvas(
   let leftSkinCount = 0;
   let rightSkinCount = 0;
   let totalChecked = 0;
+  let centerGradientSum = 0;
 
   for (let y = Math.floor(h * 0.15); y < Math.floor(h * 0.85); y += 4) {
     for (let x = Math.floor(w * 0.1); x < Math.floor(w * 0.9); x += 4) {
@@ -115,14 +116,19 @@ export async function detectFaceInCanvas(
       const g = data[idx + 1];
       const b = data[idx + 2];
 
+      // Multi-spectrum skin & facial tone detection (inclusive of dark, medium, and light tones)
       const isSkin =
-        r > 50 &&
-        g > 30 &&
-        b > 20 &&
-        r > g &&
-        r > b &&
-        Math.abs(r - g) > 10 &&
-        Math.max(r, g, b) - Math.min(r, g, b) > 12;
+        (r > 38 && g > 20 && b > 12 && (r >= g || Math.abs(r - g) < 15) && (Math.max(r, g, b) - Math.min(r, g, b) > 8)) ||
+        (r > 60 && g > 45 && b > 35 && r >= b) ||
+        (r > 100 && g > 75 && b > 60);
+
+      // Central facial texture / gradient check
+      if (x >= w * 0.25 && x <= w * 0.75 && y >= h * 0.25 && y <= h * 0.75) {
+        if (x + 4 < w) {
+          const nextIdx = (y * w + (x + 4)) * 4;
+          centerGradientSum += Math.abs(r - data[nextIdx]) + Math.abs(g - data[nextIdx + 1]);
+        }
+      }
 
       if (isSkin) {
         if (x < w * 0.35) {
@@ -141,8 +147,10 @@ export async function detectFaceInCanvas(
   const rightSkinRatio = rightSkinCount / Math.max(1, totalChecked * 0.3);
   const totalSkinCount = centerSkinCount + leftSkinCount + rightSkinCount;
   const totalSkinRatio = totalSkinCount / Math.max(1, totalChecked);
+  const avgCenterGradient = centerGradientSum / Math.max(1, totalChecked * 0.25);
 
-  if (leftSkinRatio > 0.28 && rightSkinRatio > 0.28 && centerSkinRatio < 0.15) {
+  // If two strong separate peripheral clusters with empty center -> multiple people
+  if (leftSkinRatio > 0.32 && rightSkinRatio > 0.32 && centerSkinRatio < 0.1) {
     return {
       detected: false,
       status: 'MULTIPLE_FACES',
@@ -150,7 +158,8 @@ export async function detectFaceInCanvas(
     };
   }
 
-  if (centerSkinRatio < 0.03 && totalSkinRatio < 0.03) {
+  // If no skin presence and no central facial detail -> no face
+  if (centerSkinRatio < 0.02 && totalSkinRatio < 0.02 && avgCenterGradient < 8) {
     return {
       detected: false,
       status: 'NO_FACE',

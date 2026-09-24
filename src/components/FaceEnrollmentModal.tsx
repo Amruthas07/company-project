@@ -35,7 +35,7 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
   const [success, setSuccess] = useState(false);
   const [isVideoReady, setIsVideoReady] = useState(false);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const isRequestingRef = useRef(false);
 
@@ -53,6 +53,15 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
+    }
+    setIsVideoReady(false);
+  }, []);
+
+  // Video ready checker
+  const checkVideoReady = useCallback(() => {
+    const video = videoRef.current;
+    if (video && (video.videoWidth > 0 || video.readyState >= 2)) {
+      setIsVideoReady(true);
     }
   }, []);
 
@@ -84,11 +93,16 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
 
       streamRef.current = stream;
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current
-          .play()
-          .catch((e) => console.log('[Webcam] play prevented or pending interaction:', e));
+      const video = videoRef.current;
+      if (video) {
+        video.srcObject = stream;
+        video.muted = true;
+        video.autoplay = true;
+        video.playsInline = true;
+        const playPromise = video.play();
+        if (playPromise !== undefined) {
+          playPromise.catch((e) => console.log('[Webcam] play prevented or pending interaction:', e));
+        }
       }
 
       setCameraState('active');
@@ -126,6 +140,26 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
     }
   }, [stopCamera]);
 
+  // Callback ref guarantees attachment the instant DOM node is mounted
+  const attachVideoRef = useCallback((node: HTMLVideoElement | null) => {
+    videoRef.current = node;
+    if (node && streamRef.current) {
+      if (node.srcObject !== streamRef.current) {
+        node.srcObject = streamRef.current;
+      }
+      node.muted = true;
+      node.autoplay = true;
+      node.playsInline = true;
+      const playPromise = node.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((e) => console.log('[Webcam] play prevented or pending interaction:', e));
+      }
+      if (node.videoWidth > 0) {
+        setIsVideoReady(true);
+      }
+    }
+  }, []);
+
   // Request camera on modal mount
   useEffect(() => {
     startCamera();
@@ -134,12 +168,16 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
     };
   }, [startCamera, stopCamera]);
 
-  // Re-attach stream whenever videoRef attaches or stream changes
+  // Polling interval to detect when video dimensions become usable (> 0)
   useEffect(() => {
-    if (videoRef.current && streamRef.current && videoRef.current.srcObject !== streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-      videoRef.current.play().catch(() => {});
-    }
+    if (cameraState !== 'active') return;
+    const interval = setInterval(() => {
+      const video = videoRef.current;
+      if (video && video.videoWidth > 0 && video.videoHeight > 0) {
+        setIsVideoReady(true);
+      }
+    }, 200);
+    return () => clearInterval(interval);
   }, [cameraState]);
 
   // Handle capture & enrollment
@@ -191,11 +229,11 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
         : undefined;
 
       // 5. Enroll in local store and sync multipart/form-data to backend
-      store.enrollFace(user.id, embedding, photoDataUrl, imageFile);
+      await store.enrollFace(user.id, embedding, photoDataUrl, imageFile);
 
       setSuccess(true);
     } catch (err: any) {
-      setFaceCheckError(err?.message || 'Error processing facial capture.');
+      setFaceCheckError(err?.message || 'Enrollment failed. Please try again.');
     } finally {
       setIsProcessing(false);
     }
@@ -288,36 +326,31 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
               </div>
             )}
 
-            {/* Camera Viewport Container */}
+            {/* Camera Viewport Container: 4:3 aspect ratio, relative, overflow hidden */}
             <div className="relative w-full aspect-[4/3] max-w-[360px] mx-auto overflow-hidden rounded-xl border border-slate-800 bg-slate-950 flex items-center justify-center shadow-inner">
-              {/* Live Video Element */}
+              {/* Live Video Element: 100% width/height, object-cover, NO opacity suppression */}
               <video
-                ref={videoRef}
+                ref={attachVideoRef}
                 autoPlay
                 playsInline
                 muted
-                onLoadedMetadata={() => {
-                  setIsVideoReady(true);
-                  videoRef.current?.play().catch(() => {});
-                }}
-                onCanPlay={() => {
-                  setIsVideoReady(true);
-                }}
-                className={`w-full h-full object-cover transition-opacity duration-300 ${
-                  cameraState === 'active' && isVideoReady ? 'opacity-100' : 'opacity-0'
-                }`}
+                onLoadedMetadata={checkVideoReady}
+                onLoadedData={checkVideoReady}
+                onCanPlay={checkVideoReady}
+                onPlaying={checkVideoReady}
+                className="w-full h-full object-cover"
                 style={{ transform: 'scaleX(-1)' }} // Mirror user webcam for natural preview
               />
 
-              {/* Initializing Spinner */}
+              {/* Initializing Loading State */}
               {cameraState === 'initializing' && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center p-4 bg-slate-950 text-slate-400">
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-4 bg-slate-950 text-slate-400">
                   <RefreshCw className="w-7 h-7 text-cyan-400 animate-spin mb-2" />
-                  <span className="text-xs font-medium text-slate-300">
-                    Accessing optical webcam...
+                  <span className="text-xs font-semibold text-slate-200">
+                    Loading camera...
                   </span>
-                  <span className="text-[11px] text-slate-500 mt-1 text-center">
-                    Please allow camera permissions if prompted
+                  <span className="text-[11px] text-slate-400 mt-1 text-center">
+                    Requesting optical device permissions
                   </span>
                 </div>
               )}
@@ -326,12 +359,16 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
               {(cameraState === 'denied' ||
                 cameraState === 'not_found' ||
                 cameraState === 'error') && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center p-4 bg-slate-950 text-slate-400 text-center">
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-4 bg-slate-950 text-slate-400 text-center">
                   <div className="w-12 h-12 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mb-2 text-slate-500">
                     <VideoOff className="w-6 h-6" />
                   </div>
                   <span className="text-xs font-semibold text-slate-300">
-                    Webcam Unavailable
+                    {cameraState === 'denied'
+                      ? 'Camera Permission Denied'
+                      : cameraState === 'not_found'
+                      ? 'No Camera Detected'
+                      : 'Camera Unavailable'}
                   </span>
                   <span className="text-[11px] text-slate-400 mt-1 max-w-[240px]">
                     Use the synthetic standard template below to proceed with testing.
@@ -347,8 +384,8 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
               )}
 
               {/* HUD Target Overlay for Active Stream */}
-              {cameraState === 'active' && isVideoReady && (
-                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+              {cameraState === 'active' && (
+                <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10">
                   {/* Outer Frame Guides */}
                   <div className="w-48 h-56 border-2 border-cyan-500/50 rounded-3xl relative shadow-[0_0_20px_rgba(6,182,212,0.15)]">
                     <div className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-cyan-400" />
@@ -370,22 +407,22 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
                     </div>
                   </div>
 
-                  <div className="absolute top-2 left-2 bg-slate-950/70 backdrop-blur-xs px-2 py-0.5 rounded text-[10px] font-mono text-cyan-400 flex items-center gap-1 border border-cyan-900/40">
+                  <div className="absolute top-2 left-2 bg-slate-950/80 backdrop-blur-xs px-2 py-0.5 rounded text-[10px] font-mono text-cyan-400 flex items-center gap-1.5 border border-cyan-900/40">
                     <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                    <span>OPTICAL_FEED: ACTIVE</span>
+                    <span>{isVideoReady ? 'Camera ready' : 'Connecting stream...'}</span>
                   </div>
                 </div>
               )}
 
               {/* Processing Overlay */}
               {isProcessing && (
-                <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center text-cyan-400 z-10">
+                <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-xs flex flex-col items-center justify-center text-cyan-400 z-20">
                   <RefreshCw className="w-8 h-8 animate-spin mb-2" />
                   <span className="text-xs font-semibold text-white">
-                    Extracting LBP Spatial Descriptor...
+                    Capturing...
                   </span>
                   <span className="text-[11px] text-slate-400 mt-0.5">
-                    Computing Haar landmarks &amp; L2 histogram
+                    Computing OpenCV Haar &amp; LBP Spatial Histogram
                   </span>
                 </div>
               )}
@@ -397,13 +434,12 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({
                 onClick={captureAndEnroll}
                 disabled={
                   isProcessing ||
-                  cameraState !== 'active' ||
-                  !isVideoReady
+                  cameraState !== 'active'
                 }
                 className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:border-slate-800 disabled:cursor-not-allowed border border-cyan-500/40 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-lg shadow-cyan-950/50"
               >
                 <Scan className="w-4 h-4" />
-                <span>Capture &amp; Enroll Template</span>
+                <span>{isProcessing ? 'Capturing...' : 'Capture & Enroll Template'}</span>
               </button>
 
               <button
